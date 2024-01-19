@@ -31,7 +31,7 @@ implementation "com.tencent.bk.sdk:bk-notice-java-sdk:${version}"
 
 ### Usage
 
-- [Usage Doc](docs/usage.md)
+- [使用文档](docs/usage.md)
 
 ## Roadmap
 
