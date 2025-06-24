@@ -40,7 +40,11 @@ import java.util.List;
 public class MainTest {
 
     @Test
-    public void main() {
+    public void test() {
+//        example();
+    }
+
+    public void example() {
         BkNoticeConfig bkNoticeConfig = new BkNoticeConfig();
         bkNoticeConfig.setAppCode("");
         bkNoticeConfig.setAppSecret("");
@@ -49,6 +53,7 @@ public class MainTest {
             .httpProxyHost("127.0.0.1")
             .httpProxyPort(8888)
             .build();
+        // 用法示例
         IBkNoticeClient bkNoticeClient = new BkNoticeClient(httpService, bkNoticeConfig);
         BkNoticeApp bkNoticeApp = bkNoticeClient.registerApplication();
         log.info("bkNoticeApp=" + bkNoticeApp);
