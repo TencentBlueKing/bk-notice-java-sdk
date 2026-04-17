@@ -7,6 +7,8 @@
 
 bk-notice-java-sdk is a development toolkit used by BlueKing Java series products to interface with the bk-notice. 
 
+This SDK only implements 2 HTTP interfaces. Using it through Maven Central Repository incurs higher costs, so it's more recommended to directly use the APIGW interfaces provided by the bk-notice platform to implement related functionality.
+
 ## Features
 
 - Register system to bk-notice

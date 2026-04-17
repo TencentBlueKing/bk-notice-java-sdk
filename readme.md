@@ -7,6 +7,8 @@
 
 bk-notice-java-sdk是蓝鲸Java系产品用于对接蓝鲸消息通知中心的一套开发工具包。  
 
+该SDK实现的功能仅2个HTTP接口，通过Maven中央仓库使用成本较高，更推荐直接使用bk-notice平台提供的APIGW接口实现相关功能。
+
 ## Features
 
 - 注册应用到消息通知中心
