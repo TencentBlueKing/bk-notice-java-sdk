@@ -43,7 +43,13 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.message.BasicHeader;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @SuppressWarnings("SameParameterValue")
@@ -95,24 +101,43 @@ public class BkNoticeClient implements IBkNoticeClient {
         return resp.getData();
     }
 
+    private static final Set<String> ALLOWED_LANGUAGES = new HashSet<>(Arrays.asList(
+        "zh", "zh-cn", "en", "en-us"
+    ));
+
     private String buildUriWithParams(String bkLanguage, Integer offset, Integer limit) {
         StringBuilder sb = new StringBuilder();
         sb.append(URI_GET_CURRENT_ANNOUNCEMENTS);
         sb.append("?platform=");
-        sb.append(bkNoticeConfig.getAppCode());
+        sb.append(encodeParam(bkNoticeConfig.getAppCode()));
         if (StringUtils.isNotBlank(bkLanguage)) {
+            String lang = bkLanguage.trim().toLowerCase();
+            if (!ALLOWED_LANGUAGES.contains(lang)) {
+                throw new BkNoticeException(
+                    "Unsupported bkLanguage value: " + bkLanguage
+                        + ", allowed values: " + ALLOWED_LANGUAGES
+                );
+            }
             sb.append("&language=");
-            sb.append(bkLanguage);
+            sb.append(encodeParam(lang));
         }
         if (offset != null) {
             sb.append("&offset=");
-            sb.append(offset);
+            sb.append(encodeParam(String.valueOf(offset)));
         }
         if (limit != null) {
             sb.append("&limit=");
-            sb.append(limit);
+            sb.append(encodeParam(String.valueOf(limit)));
         }
         return sb.toString();
+    }
+
+    private static String encodeParam(String value) {
+        try {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8.name());
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
