@@ -44,7 +44,10 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.message.BasicHeader;
 
 import java.io.UnsupportedEncodingException;
+import java.net.InetAddress;
+import java.net.URI;
 import java.net.URLEncoder;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -69,6 +72,7 @@ public class BkNoticeClient implements IBkNoticeClient {
     }
 
     public BkNoticeClient(IHttpService httpService, BkNoticeConfig bkNoticeConfig) {
+        validateApiBaseUrl(bkNoticeConfig.getApiBaseUrl());
         this.httpService = httpService;
         this.bkNoticeConfig = bkNoticeConfig;
         authorization = BkApiAuthorization.appAuthorization(
@@ -188,7 +192,64 @@ public class BkNoticeClient implements IBkNoticeClient {
     }
 
     private String buildCompleteUrl(String path) {
-        return bkNoticeConfig.getApiBaseUrl() + path;
+        String completeUrl = bkNoticeConfig.getApiBaseUrl() + path;
+        URI uri;
+        try {
+            uri = new URI(completeUrl);
+        } catch (Exception e) {
+            throw new BkNoticeException("Invalid complete URL: " + completeUrl, e);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())) {
+            throw new BkNoticeException(
+                "Only HTTPS protocol is allowed, got: " + uri.getScheme()
+            );
+        }
+        return completeUrl;
+    }
+
+    /**
+     * 校验 apiBaseUrl 的合法性：仅允许 HTTPS 协议，禁止内网/本地地址
+     */
+    private static void validateApiBaseUrl(String apiBaseUrl) {
+        if (StringUtils.isBlank(apiBaseUrl)) {
+            throw new BkNoticeException("apiBaseUrl must not be blank");
+        }
+
+        URI uri;
+        try {
+            uri = new URI(apiBaseUrl);
+        } catch (Exception e) {
+            throw new BkNoticeException("Invalid apiBaseUrl: " + apiBaseUrl, e);
+        }
+
+        // 1. 仅允许 HTTPS 协议
+        if (!"https".equalsIgnoreCase(uri.getScheme()) && !"http".equalsIgnoreCase(uri.getScheme())) {
+            throw new BkNoticeException(
+                "Only HTTPS/HTTP protocol is allowed for apiBaseUrl, got: " + uri.getScheme()
+            );
+        }
+
+        // 2. 域名不能为空
+        String host = uri.getHost();
+        if (StringUtils.isBlank(host)) {
+            throw new BkNoticeException("apiBaseUrl must contain a valid host");
+        }
+
+        // 3. 禁止内网/本地/链路本地地址
+        try {
+            InetAddress address = InetAddress.getByName(host);
+            if (address.isLoopbackAddress()
+                || address.isSiteLocalAddress()
+                || address.isLinkLocalAddress()
+                || address.isAnyLocalAddress()) {
+                throw new BkNoticeException(
+                    "apiBaseUrl must not point to a local/internal address: " + host
+                );
+            }
+        } catch (UnknownHostException e) {
+            // 域名无法解析时在初始化阶段仅记录警告，不阻断（运行时网络可能尚未就绪）
+            log.warn("Cannot resolve apiBaseUrl host for SSRF validation: {}", host);
+        }
     }
 
     private Header[] buildBkApiRequestHeaders(BkApiAuthorization authorization) {
