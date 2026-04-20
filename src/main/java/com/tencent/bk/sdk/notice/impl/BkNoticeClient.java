@@ -199,16 +199,26 @@ public class BkNoticeClient implements IBkNoticeClient {
         } catch (Exception e) {
             throw new BkNoticeException("Invalid complete URL: " + completeUrl, e);
         }
-        if (!"https".equalsIgnoreCase(uri.getScheme())) {
+        // 协议校验：仅允许 HTTPS 或 HTTP 协议
+        if (!"https".equalsIgnoreCase(uri.getScheme()) && !"http".equalsIgnoreCase(uri.getScheme())) {
             throw new BkNoticeException(
-                "Only HTTPS protocol is allowed, got: " + uri.getScheme()
+                "Only HTTPS or HTTP protocol is allowed, got: " + uri.getScheme()
             );
         }
+        // 域名校验
+        String host = uri.getHost();
+        if (StringUtils.isBlank(host)) {
+            throw new BkNoticeException("Complete URL must contain a valid host");
+        }
+        // 每次请求前都重新解析并对所有 A/AAAA 记录进行 SSRF 校验，
+        // 防止 DNS rebinding、多记录轮询等绕过手段
+        validateHostNotInternal(host);
         return completeUrl;
     }
 
     /**
-     * 校验 apiBaseUrl 的合法性：仅允许 HTTPS 协议，禁止内网/本地地址
+     * 校验 apiBaseUrl 的合法性：仅允许 HTTPS 协议，禁止内网/本地地址。
+     * 采用 fail-closed 策略：DNS 解析失败时直接阻断。
      */
     private static void validateApiBaseUrl(String apiBaseUrl) {
         if (StringUtils.isBlank(apiBaseUrl)) {
@@ -223,9 +233,9 @@ public class BkNoticeClient implements IBkNoticeClient {
         }
 
         // 1. 仅允许 HTTPS 协议
-        if (!"https".equalsIgnoreCase(uri.getScheme()) && !"http".equalsIgnoreCase(uri.getScheme())) {
+        if (!"https".equalsIgnoreCase(uri.getScheme())) {
             throw new BkNoticeException(
-                "Only HTTPS/HTTP protocol is allowed for apiBaseUrl, got: " + uri.getScheme()
+                "Only HTTPS protocol is allowed for apiBaseUrl, got: " + uri.getScheme()
             );
         }
 
@@ -235,21 +245,91 @@ public class BkNoticeClient implements IBkNoticeClient {
             throw new BkNoticeException("apiBaseUrl must contain a valid host");
         }
 
-        // 3. 禁止内网/本地/链路本地地址
+        // 3. 禁止内网/本地/链路本地地址（全量解析 + fail-closed）
+        validateHostNotInternal(host);
+    }
+
+    /**
+     * 对 host 的所有解析结果（A/AAAA 记录）逐一做 SSRF 校验。
+     * 设计要点（防御 DNS rebinding 与多记录绕过）：
+     * 1. 使用 {@link InetAddress#getAllByName(String)} 获取全部地址，而非仅首个结果；
+     * 2. 任一地址命中 loopback / siteLocal / linkLocal / anyLocal / 保留段则拒绝；
+     * 3. DNS 解析失败采用 fail-closed 策略，直接抛出异常阻断请求。
+     */
+    private static void validateHostNotInternal(String host) {
+        InetAddress[] addresses;
         try {
-            InetAddress address = InetAddress.getByName(host);
-            if (address.isLoopbackAddress()
-                || address.isSiteLocalAddress()
-                || address.isLinkLocalAddress()
-                || address.isAnyLocalAddress()) {
+            addresses = InetAddress.getAllByName(host);
+        } catch (UnknownHostException e) {
+            // fail-closed：无法解析即视为不安全
+            throw new BkNoticeException(
+                "Cannot resolve host for SSRF validation, request blocked: " + host, e
+            );
+        }
+        if (addresses == null || addresses.length == 0) {
+            throw new BkNoticeException(
+                "No IP address resolved for host, request blocked: " + host
+            );
+        }
+        for (InetAddress address : addresses) {
+            if (isInternalAddress(address)) {
                 throw new BkNoticeException(
-                    "apiBaseUrl must not point to a local/internal address: " + host
+                    "Host must not resolve to a local/internal/metadata address: "
+                        + host + " -> " + address.getHostAddress()
                 );
             }
-        } catch (UnknownHostException e) {
-            // 域名无法解析时在初始化阶段仅记录警告，不阻断（运行时网络可能尚未就绪）
-            log.warn("Cannot resolve apiBaseUrl host for SSRF validation: {}", host);
         }
+    }
+
+    /**
+     * 判断是否为内网/本地/保留地址。
+     */
+    private static boolean isInternalAddress(InetAddress address) {
+        if (address.isLoopbackAddress()
+            || address.isSiteLocalAddress()
+            || address.isLinkLocalAddress()
+            || address.isAnyLocalAddress()
+            || address.isMulticastAddress()) {
+            return true;
+        }
+        byte[] bytes = address.getAddress();
+        if (bytes.length == 4) {
+            int b0 = bytes[0] & 0xFF;
+            int b1 = bytes[1] & 0xFF;
+            // 0.0.0.0/8
+            if (b0 == 0) {
+                return true;
+            }
+        } else if (bytes.length == 16) {
+            // IPv6：fc00::/7（Unique Local Address）
+            if ((bytes[0] & 0xFE) == 0xFC) {
+                return true;
+            }
+            // IPv4-mapped IPv6：::ffff:x.x.x.x，回退到 IPv4 判断
+            boolean isV4Mapped = true;
+            for (int i = 0; i < 10; i++) {
+                if (bytes[i] != 0) {
+                    isV4Mapped = false;
+                    break;
+                }
+            }
+            if (isV4Mapped
+                && (bytes[10] & 0xFF) == 0xFF
+                && (bytes[11] & 0xFF) == 0xFF) {
+                int b0 = bytes[12] & 0xFF;
+                int b1 = bytes[13] & 0xFF;
+                if (b0 == 169 && b1 == 254) {
+                    return true;
+                }
+                if (b0 == 100 && b1 >= 64 && b1 <= 127) {
+                    return true;
+                }
+                if (b0 == 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private Header[] buildBkApiRequestHeaders(BkApiAuthorization authorization) {

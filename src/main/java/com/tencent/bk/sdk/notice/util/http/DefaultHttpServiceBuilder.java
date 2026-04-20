@@ -201,7 +201,9 @@ public class DefaultHttpServiceBuilder implements IHttpServiceBuilder {
             .evictIdleConnections(5, TimeUnit.SECONDS)
             .disableAuthCaching()
             .disableCookieManagement()
-            .disableAutomaticRetries();
+            .disableAutomaticRetries()
+            // 禁用自动重定向，防止通过 30x 跳转到内网地址绕过 SSRF 校验
+            .disableRedirectHandling();
 
         if (StringUtils.isNotBlank(this.httpProxyHost) && StringUtils.isNotBlank(this.httpProxyUsername)) {
             // 使用代理服务器 需要用户认证的代理服务器

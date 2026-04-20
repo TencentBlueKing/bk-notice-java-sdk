@@ -27,9 +27,11 @@ package com.tencent.bk.sdk.notice.util.http;
 import com.tencent.bk.sdk.notice.util.json.JsonUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.http.Header;
+import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.util.EntityUtils;
@@ -52,8 +54,7 @@ public class DefaultHttpService implements IHttpService {
     public String doHttpGet(String uri, Header[] headers) throws IOException {
         HttpGet httpGet = new HttpGet(uri);
         httpGet.setHeaders(headers);
-        CloseableHttpResponse httpResponse = httpClient.execute(httpGet);
-        return EntityUtils.toString(httpResponse.getEntity(), charset);
+        return executeAndExtract(httpGet);
     }
 
     @Override
@@ -61,7 +62,25 @@ public class DefaultHttpService implements IHttpService {
         HttpPost httpPost = new HttpPost(uri);
         httpPost.setHeaders(headers);
         httpPost.setEntity(new ByteArrayEntity(JsonUtils.toJson(body).getBytes(charset)));
-        CloseableHttpResponse httpResponse = httpClient.execute(httpPost);
-        return EntityUtils.toString(httpResponse.getEntity(), charset);
+        return executeAndExtract(httpPost);
+    }
+
+    /**
+     * 执行请求并读取响应体。
+     * 纵深防御：对 30x 重定向响应显式拒绝，防止被跳转到内网/云元数据地址（SSRF）。
+     * 注：HttpClient 已通过 disableRedirectHandling() 禁用自动重定向，此处二次拦截。
+     */
+    private String executeAndExtract(HttpUriRequest request) throws IOException {
+        try (CloseableHttpResponse httpResponse = httpClient.execute(request)) {
+            int statusCode = httpResponse.getStatusLine().getStatusCode();
+            if (statusCode >= 300 && statusCode < 400) {
+                throw new IOException(
+                    "Redirect response is not allowed, status=" + statusCode
+                        + ", uri=" + request.getURI()
+                );
+            }
+            HttpEntity entity = httpResponse.getEntity();
+            return entity == null ? "" : EntityUtils.toString(entity, charset);
+        }
     }
 }
